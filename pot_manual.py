@@ -31,13 +31,18 @@ bus = can.Bus(interface='socketcan',
               channel='can0',
               receive_own_messages=True)
 '''
+
 #GLOBAL_DATA
 gCanDataResult = 0
 gPotBreak = 0;
 gPotAccel = 0;
+gPotEmotion =0;
+Flag_ack = 0;
 
 #break_on="{throttle: 0.0, steer: 0.0, break: 1.0, hand_brake: 1.0, reverse: 0, gear: 1, manual_gear_shift: 0}"
 #['header', 'throttle', 'steer', 'brake', 'hand_brake', 'reverse', 'gear', 'manual_gear_shift']
+'''----------------------------------------------------------------'''
+'''--------------------ROS_init------------------------------------'''
 vehicle_ctrl_info = CarlaEgoVehicleControl()
 ack_vehicle_ctrl_info=AckermannDrive()
 vehicle_cmd = rospy.Publisher("/carla/ego_vehicle/vehicle_control_cmd", 
@@ -45,24 +50,60 @@ vehicle_cmd = rospy.Publisher("/carla/ego_vehicle/vehicle_control_cmd",
 ack_vehicle_cmd = rospy.Publisher("/carla/ego_vehicle/ackermann_cmd", 
     AckermannDrive, queue_size=1)
 
+
+'''------------------------------------------------------------'''
+'''-----------ROS_pub_Info-------------------------------------'''
 SPEED_OFFSET = 3.713
 Thtotte = 0.9
 elseThtotte=0.2
 vehicle_ctrl_info.brake = 0.0
 vehicle_ctrl_info.hand_brake=False
 vehicle_ctrl_info.gear = 4
-ack_vehicle_ctrl_info.speed=10
-ack_vehicle_ctrl_info.acceleration=0;
-def AccCmd( sveldata, inveldata  ) :
+#ack_vehicle_ctrl_info.speed= 1.3466
+#ack_vehicle_ctrl_info.acceleration=0.6208;
 
-    if(  1 > (sveldata - inveldata) ):
-        vehicle_ctrl_info.throttle = Thtotte
-        vehicle_ctrl_info.brake = 0.00
+
+'''------------------------------------------------------------------'''
+'''---------------------------Vehicle_CTRL---------------------------'''
+def Ackermann_Info_Func(speed, acceleration):
+    ack_vehicle_ctrl_info.speed = speed / SPEED_OFFSET;
+    ack_vehicle_ctrl_info.acceleration = acceleration;
+
+def Ack_Vehilce_ctrl(veldata, biodata) :
+    if( biodata[0] == 1):
+        if( ((veldata*SPEED_OFFSET)-20) > 5 ):
+            ack_vehicle_ctrl_info.speed = 3 / SPEED_OFFSET
+            ack_vehicle_ctrl_info.acceleration = 0;
+            print('11111')
+        else:
+            ack_vehicle_ctrl_info.speed = 20 / SPEED_OFFSET
+            ack_vehicle_ctrl_info.acceleration = abs((veldata) - (20/SPEED_OFFSET)) #0.6208; #2km
+    elif( biodata[0] == 2):
+            ack_vehicle_ctrl_info.speed = 0 
+            ack_vehicle_ctrl_info.acceleration = 0;
+    elif( biodata[0] == 3):
+        if( biodata[1] == 1) :
+            ack_vehicle_ctrl_info.speed = 0 
+            ack_vehicle_ctrl_info.acceleration = 0; #2km
+        elif( (veldata*SPEED_OFFSET) > 30) :   
+            ack_vehicle_ctrl_info.speed =  0;
+            ack_vehicle_ctrl_info.acceleration =abs((veldata) - (10/SPEED_OFFSET))
+        else:
+            ack_vehicle_ctrl_info.speed = 10 / SPEED_OFFSET
+            ack_vehicle_ctrl_info.acceleration =  abs((veldata) - (10/SPEED_OFFSET)); #2km
+    elif( biodata[0] == 4):
+        if( ((veldata*SPEED_OFFSET)-40) > 5 ):
+            ack_vehicle_ctrl_info.speed =  5 / SPEED_OFFSET
+            ack_vehicle_ctrl_info.acceleration = 2
+        else:
+            ack_vehicle_ctrl_info.speed = 40 / SPEED_OFFSET
+            ack_vehicle_ctrl_info.acceleration = 0.6208 #2km
+    else:
+        ack_vehicle_ctrl_info.speed = 0 / SPEED_OFFSET
+        ack_vehicle_ctrl_info.acceleration = 3 #2km
 
 
 def Vehicle_ctrl(veldata,candata) :
-    
-
     print('vel can',candata[0])    
     if candata[0] == 1 :
         if( (veldata*SPEED_OFFSET) >= 18.0 ) and  ( (veldata*SPEED_OFFSET) <= 20.0 ) :
@@ -128,6 +169,8 @@ def Vehicle_ctrl(veldata,candata) :
         print( 'debug - why tlqkf' )
 
 
+'''------------------------------------------------------------------'''
+'''-------------------------ROS sub CallBack-------------------------'''
 class Subvelocity:
     #global
     gdata = ""
@@ -144,10 +187,11 @@ class Subvelocity:
         js = json.loads(rosdata)
 
         vel_data=js['velocity']
-        vehicle_ctrl_info.gear = 4
         Subvelocity.gdata = vel_data
-        
 
+
+'''---------------------------------------------------------'''      
+'''---------------------------CAN---------------------------'''
 def print_message(msg):
     """Regular callback function. Can also be a coroutine."""
     print(msg)
@@ -165,36 +209,24 @@ async def can_rc():
     # Create Notifier with an explicit loop to use for scheduling of callbacks
     loop = asyncio.get_event_loop()
     notifier = can.Notifier(can0, listeners, loop=loop)
-    # Start sending first message
-    #can0.send(can.Message(arbitration_id=0, is_extended_id=False))
-
-    #print('Bouncing 10 messages...')
-    #for _ in range(10):
-        # Wait for next message from AsyncBufferedReader
     msg = await reader.get_message()
-        # Delay response
-    #await asyncio.sleep(0.5)
-        #msg.arbitration_id += 1
-        #can0.send(msg)
-    # Wait for last message to arrive
-    #await reader.get_message()
-    #print(msg.arbitration_id)
+
     gCanDataResult = msg.data
-    gPotBreak = gCanDataResult[3]
-    gPotBreak |= (gCanDataResult[4]<<8)
-    gPotAccel = gCanDataResult[5]
-    gPotAccel |= (gCanDataResult[6]<<8)
-    vehicle_ctrl_info.throttle = gPotAccel/4000
-    vehicle_ctrl_info.brake = 0.0
-    vehicle_ctrl_info.hand_brake=False
-    vehicle_ctrl_info.gear = 4
-    print('pot',gPotAccel/4000)
+    if(gCanDataResult[0] == 0):
+        gPotAccel = gCanDataResult[3] / 100
+        vehicle_ctrl_info.throttle = gPotAccel
+        Flag_ack = 0
+    else :
+        Flag_ack = 1
+    gPotEmotion = gCanDataResult[4]
+    print ('| 엑셀:',  gCanDataResult[3] / 100, '| emotion:',gCanDataResult[0], '| user_emotion:', gPotEmotion)
     # Clean-up
     notifier.stop()
     #can0.shutdown()
-    return gCanDataResult
+    return gCanDataResult ,Flag_ack
 
 
+'''---------------------------MAIN---------------------------'''
 def main():
     while not rospy.is_shutdown():
         #rospy.init_node("sub_hglee_velocity", anonymous=False)
@@ -204,52 +236,28 @@ def main():
         try:
             rospy.Subscriber("/carla/ego_vehicle/vehicle_status", 
             CarlaEgoVehicleStatus,SubVeldata.RosSubCallbak_DataCarla )
-            #rospy.sleep(0.05)
-            #a = SubVeldata.GetRosdata()
-            #b = asyncio.get_event_loop().run_until_complete(can_rc())
-            #asyncio.get_event_loop().close()
-            #print('main vel', a*SPEED_OFFSET)
+
         except Exception as e:
             print( 'exception' , e )
 
-
-        #rospy.Rate(5)
-        #a = SubVeldata.GetRosdata()
-
         df = pd.read_table("kang.txt", sep=":", names=['Name', 'Data'])
         last_velocity = df[df["Name"] == 'velocity'].iloc[-1, 1]
-        print('last_velocity', last_velocity)
-        a = float(last_velocity)
+        #print('last_velocity', last_velocity)
+        current_velocity = float(last_velocity)
+        can_data, flag = asyncio.get_event_loop().run_until_complete(can_rc())
 
-        b = asyncio.get_event_loop().run_until_complete(can_rc())
-        '''
-        async for msg in bus:
-            print(">","{}: {}".format(hex(msg.arbitration_id), msg.data))
-            gCanDataResult=b
-        '''
-        #vehicle_cmd.publish(vehicle_ctrl_info)
-        ack_vehicle_cmd.publish(ack_vehicle_ctrl_info)
-        print('main can', b)
-        #print('*******************************')
-        #print((a*SPEED_OFFSET))
-        print('main vel1', a*SPEED_OFFSET)
-        #Vehicle_ctrl(a,b)
+        if( flag == 0 ) :
+            vehicle_cmd.publish(vehicle_ctrl_info)
+            print('akc1')
+        else :
+            Ack_Vehilce_ctrl(current_velocity, can_data)
+            ack_vehicle_cmd.publish(ack_vehicle_ctrl_info)
+            print('ack2')
+
+        print('속도: ', current_velocity*SPEED_OFFSET)
+        #Vehicle_ctrl(current_velocity ,can_data)
         
         
-        #asyncio.get_event_loop().close
-
-        #while not rospy.is_shutdown():
-        #if(SubVeldata > 8):
-            #vehicle_cmd.publish(String_cmd)
-        #    print('ok')
-        #rospy.spin()
-'''
-# Get the default event loop
-loop = asyncio.get_event_loop()
-# Run until main coroutine finishes
-loop.run_until_complete(can_rc())
-loop.close()
-'''
 if __name__ == "__main__":
     while True:
         try :
