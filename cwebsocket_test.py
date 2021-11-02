@@ -4,7 +4,7 @@
 import websockets
 import asyncio
 import json
-
+import base64
 #ros
 import rospy
 from geometry_msgs.msg import Twist, Transform
@@ -17,10 +17,11 @@ from carla_msgs.msg import CarlaEgoVehicleInfo, CarlaEgoVehicleInfoWheel,\
 
 from rospy_message_converter import json_message_converter
 
+from sensor_msgs.msg import Image
 
 
 async def connect(hg_data):
-    async with websockets.connect("ws://localhost:3000") as websocket:
+    async with websockets.connect("ws://localhost:3001") as websocket:
         await websocket.send(hg_data)
         data = await websocket.recv()
         print(data)
@@ -37,7 +38,7 @@ class csRosCarla:
 
     def RosSubCallbak_DataCarla(self,data):      
         #self.json_str = json_message_converter.convert_ros_message_to_json(data)
-        csRosCarla.gdata = json_message_converter.convert_ros_message_to_json(data)
+        csRosCarla.gdata = base64.b64encode(data)#json_message_converter.convert_ros_message_to_json(data)
         
         
 
@@ -47,13 +48,15 @@ def main():
     rsCarladata = csRosCarla()
 
     try:
-        rospy.Subscriber("/carla/ego_vehicle/vehicle_status", 
-        CarlaEgoVehicleStatus, rsCarladata.RosSubCallbak_DataCarla )
+        #rospy.Subscriber("/carla/ego_vehicle/vehicle_status", 
+        #CarlaEgoVehicleStatus, rsCarladata.RosSubCallbak_DataCarla )
+        rospy.Subscriber("/image_raw", 
+        Image, rsCarladata.RosSubCallbak_DataCarla )
     except Exception:
         print( 'exception' )
     
     a = rsCarladata.GetRosdata()
-    print(a)
+    #print(a)
     asyncio.get_event_loop().run_until_complete(connect(a))
 
 
